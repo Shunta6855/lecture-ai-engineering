@@ -56,6 +56,18 @@ class GenerationResponse(BaseModel):
     generated_text: str
     response_time: float
 
+# バッチリクエスト・レスポンス用のデータモデル
+class BatchGenerationRequest(BaseModel):
+    prompts: List[str]
+    max_new_tokens: Optional[int] = 512
+    do_sample: Optional[bool] = True
+    temperature: Optional[float] = 0.7
+    top_p: Optional[float] = 0.9
+
+class BatchGenerationResponse(BaseModel):
+    responses: List[str]
+    response_time: float
+
 # --- モデル関連の関数 ---
 # モデルのグローバル変数
 model = None
@@ -192,6 +204,56 @@ async def generate_simple(request: SimpleGenerationRequest):
 
         return GenerationResponse(
             generated_text=assistant_response,
+            response_time=response_time
+        )
+
+    except Exception as e:
+        print(f"シンプル応答生成中にエラーが発生しました: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"応答の生成中にエラーが発生しました: {str(e)}")
+
+# バッチ処理のエンドポイント
+@app.post("/generate_batch", response_model=BatchGenerationResponse)
+async def generate_simple(request: BatchGenerationRequest):
+    """単純なプロンプト入力に基づいてテキストを生成"""
+    global model
+
+    if model is None:
+        print("generate_batchエンドポイント: モデルが読み込まれていません。読み込みを試みます...")
+        load_model_task()  # 再度読み込みを試みる
+        if model is None:
+            print("generate_batchエンドポイント: モデルの読み込みに失敗しました。")
+            raise HTTPException(status_code=503, detail="モデルが利用できません。後でもう一度お試しください。")
+
+    try:
+        start_time = time.time()
+        outputs = []
+
+        for prompt in request.prompts:
+            print(f"リクエストを受信: prompt={prompt[:100]}..., max_new_tokens={request.max_new_tokens}")  # 長いプロンプトは切り捨て
+
+            # プロンプトテキストで直接応答を生成
+            print("モデル推論を開始...")
+            output = model(
+                prompt,
+                max_new_tokens=request.max_new_tokens,
+                do_sample=request.do_sample,
+                temperature=request.temperature,
+                top_p=request.top_p,
+            )
+            print("モデル推論が完了しました。")
+
+            # アシスタント応答を抽出
+            assistant_response = extract_assistant_response(output, prompt)
+            print(f"抽出されたアシスタント応答: {assistant_response[:100]}...")  # 長い場合は切り捨て
+            outputs.append(assistant_response)
+
+        end_time = time.time()
+        response_time = end_time - start_time
+        print(f"応答生成時間: {response_time:.2f}秒")
+
+        return BatchGenerationResponse(
+            responses=outputs,
             response_time=response_time
         )
 
